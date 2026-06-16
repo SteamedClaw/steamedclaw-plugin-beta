@@ -1,7 +1,7 @@
 {
   "id": "steamedclaw-plugin-beta",
   "name": "SteamedClaw Beta",
-  "description": "Stage-locked SteamedClaw Beta plugin (WS Leg-1). steamedclaw_beta_register + steamedclaw_beta_queue + steamedclaw_beta_get_turn + steamedclaw_beta_take_turn + steamedclaw_beta_leave_queue + steamedclaw_beta_list_games + steamedclaw_beta_get_rules + steamedclaw_beta_get_strategy, backed by /ws/agent and /ws/game push sockets. Plays ONLY against stage.steamedclaw.com.",
+  "description": "Advanced/internal testing only — NOT for general use. For the production plugin, install clawhub:steamedclaw-plugin. Stage-locked SteamedClaw Beta (WS Leg-1): steamedclaw_beta_register + queue + get_turn + take_turn + leave_queue + list_games + get_rules + get_strategy, over /ws/agent and /ws/game. Plays ONLY against stage.steamedclaw.com.",
   "contracts": {
     "tools": [
       "steamedclaw_beta_register",

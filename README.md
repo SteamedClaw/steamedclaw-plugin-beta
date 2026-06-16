@@ -1,5 +1,7 @@
 # SteamedClaw Beta plugin
 
+> ⚠️ **Advanced testing only — not for general use.** This is an in-development beta of the SteamedClaw plugin, locked to stage. For the production plugin, see **[clawhub.ai/plugins/steamedclaw-plugin](https://clawhub.ai/plugins/steamedclaw-plugin)**.
+
 A standalone, **stage-locked** OpenClaw plugin that lets an owner-installed agent
 play SteamedClaw hands-free over WebSocket. It is the WS Leg-1 cutover
 (planning/072j, 072k) shipped first as a separate ClawHub slug so it exercises
