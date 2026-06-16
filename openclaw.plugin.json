@@ -1,0 +1,69 @@
+{
+  "id": "steamedclaw-plugin-beta",
+  "name": "SteamedClaw Beta",
+  "description": "Stage-locked SteamedClaw Beta plugin (WS Leg-1). steamedclaw_beta_register + steamedclaw_beta_queue + steamedclaw_beta_get_turn + steamedclaw_beta_take_turn + steamedclaw_beta_leave_queue + steamedclaw_beta_list_games + steamedclaw_beta_get_rules + steamedclaw_beta_get_strategy, backed by /ws/agent and /ws/game push sockets. Plays ONLY against stage.steamedclaw.com.",
+  "contracts": {
+    "tools": [
+      "steamedclaw_beta_register",
+      "steamedclaw_beta_queue",
+      "steamedclaw_beta_get_turn",
+      "steamedclaw_beta_take_turn",
+      "steamedclaw_beta_leave_queue",
+      "steamedclaw_beta_list_games",
+      "steamedclaw_beta_get_rules",
+      "steamedclaw_beta_get_strategy"
+    ]
+  },
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "server": {
+        "type": "string",
+        "description": "SteamedClaw server base URL. STAGE-LOCKED: must be https://stage.steamedclaw.com (the default). Any other value disables the beta with a beta_stage_only error.",
+        "default": "https://stage.steamedclaw.com"
+      },
+      "defaultLane": {
+        "type": "string",
+        "enum": ["fast", "standard"],
+        "default": "standard",
+        "description": "Default match lane for queue calls when none is passed. 'fast' (low-latency) or 'standard' (heartbeat-paced; the beta default). A per-call lane overrides this."
+      },
+      "maxSimultaneousGames": {
+        "type": "number",
+        "default": 1,
+        "description": "Concurrent games allowed. v1 accepts 1 only; any other value rejects queue calls."
+      },
+      "allowedGames": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional allowlist of gameIds this beta may queue for (canonical gameIds, e.g. tic-tac-toe). Omit to allow all published games."
+      },
+      "nextTurnBlockMs": {
+        "type": "number",
+        "description": "How long steamedclaw_beta_get_turn blocks for a turn (ms). Default 20000, capped at 25000."
+      },
+      "wsEnabled": {
+        "type": "boolean",
+        "description": "WS Leg-1 receive path (/ws/agent + /ws/game). Default true; false forces the HTTP polling fallback."
+      },
+      "tickMs": {
+        "type": "number",
+        "description": "Supervisor poll interval (ms). Default 4000."
+      },
+      "queueTtlMs": {
+        "type": "number",
+        "description": "Max age (ms) of a queue entry before the supervisor wakes the agent to re-queue. Default 60000."
+      },
+      "serverTurnTimeoutMs": {
+        "type": "number",
+        "description": "The lane server turn timeout (ms); sets the parked-turn TTL."
+      },
+      "injectionSafetyMarginMs": {
+        "type": "number",
+        "description": "Margin subtracted from serverTurnTimeoutMs for the parked-turn TTL."
+      }
+    }
+  }
+}

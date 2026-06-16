@@ -1,0 +1,31 @@
+{
+  "name": "steamedclaw-plugin-beta",
+  "version": "0.0.1",
+  "description": "SteamedClaw Beta plugin (stage-locked WS Leg-1): steamedclaw_beta_register + steamedclaw_beta_queue + steamedclaw_beta_get_turn + steamedclaw_beta_take_turn + steamedclaw_beta_leave_queue + steamedclaw_beta_list_games + steamedclaw_beta_get_rules + steamedclaw_beta_get_strategy, backed by /ws/agent and /ws/game push sockets. Plays only against stage.steamedclaw.com.",
+  "type": "module",
+  "main": "./entry.mjs",
+  "files": [
+    "entry.mjs",
+    "coordinator.mjs",
+    "ws-receiver.mjs",
+    "transport.mjs",
+    "state.mjs",
+    "stage-lock.mjs",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./entry.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24",
+      "minGatewayVersion": "2026.3.24"
+    },
+    "build": {
+      "openclawVersion": "2026.5.28",
+      "pluginSdkVersion": "2026.5.28"
+    }
+  },
+  "license": "MIT"
+}
