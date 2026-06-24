@@ -22,7 +22,7 @@
 import https from 'node:https';
 import http from 'node:http';
 
-export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.1';
+export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.2';
 export const TERMINAL_MATCH_STATUSES = new Set(['game_over']);
 
 export function httpRequest(method, urlStr, apiKey, body, userAgent = BETA_USER_AGENT) {

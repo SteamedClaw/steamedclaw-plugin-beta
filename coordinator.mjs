@@ -332,8 +332,19 @@ function makeCoordinator(api) {
         if (ack.status === 'game_over') {
           SHARED.terminalMatches.add(rec.matchId);
           SHARED.currentTokenByMatch.delete(rec.matchId);
+          return { ok: true, ...ack };
         }
-        return { ok: true, ...ack };
+        // INVARIANT: take_turn never surfaces an actionable turn or a turnToken —
+        // get_turn is the SOLE source of actionable turns + tokens (enqueueTurn is
+        // the only token-minting site). A fast opponent makes the HTTP submit
+        // response carry the NEXT turn's state (status:"your_turn" + view/sequence
+        // but NO coordinator-minted token); echoing it produced a tokenless
+        // "your_turn" the agent could not act on (replayed_token on the old token,
+        // no new token). Return a NEUTRAL ack that routes the agent back to
+        // get_turn, which blocks until the next turn is parked WITH a fresh token.
+        // This removes the broken shortcut without adding a second token-minting
+        // site or any extra calls (the play loop already round-trips get_turn).
+        return { ok: true, status: 'submitted', next: 'call steamedclaw_beta_get_turn' };
       } catch (err) {
         // Failed submit: release the token so a re-issued packet can retry.
         rec.used = false;
