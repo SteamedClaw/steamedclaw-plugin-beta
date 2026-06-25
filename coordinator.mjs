@@ -28,7 +28,7 @@ const MAX_NEXT_TURN_BLOCK_MS = 25000;
 const SHARED = {
   bindings: new Map(), //  sessionKey -> { agentId, gameId, matchId }
   matchToSession: new Map(), //  matchId    -> sessionKey
-  tokens: new Map(), //  turnToken  -> { sessionKey, matchId, sequence, viewHash, used, attempts, packet, idempotencyKey, ttlMs }
+  tokens: new Map(), //  turnToken  -> { sessionKey, matchId, sequence, viewHash, used, attempts, packet, idempotencyKey }
   currentTokenByMatch: new Map(), //  matchId -> turnToken (newest; older are stale)
   transportByMatch: new Map(), //  matchId -> { isOpen(): bool, submit(frame): Promise<ack> } — dormant Leg-2 seam
   terminalMatches: new Set(), //  matchId set after game_over
@@ -126,9 +126,6 @@ function hashView(view) {
 // the pull/submit reads are NOT owner-gated, so the tools resolve from any
 // instance.
 function makeCoordinator(api) {
-  const cfg = api.pluginConfig ?? {};
-  const serverTurnTimeoutMs = cfg.serverTurnTimeoutMs ?? 120000;
-  const safetyMarginMs = cfg.injectionSafetyMarginMs ?? 5000;
   const logger = api.logger ?? { info() {}, warn() {}, error() {} };
 
   let myGeneration = 0;
@@ -227,7 +224,6 @@ function makeCoordinator(api) {
       SHARED.tokenSeq += 1;
       const turnToken = `tok:${matchId}:${sequence}:g${myGeneration}:n${SHARED.tokenSeq}`;
       const idempotencyKey = `steamedclaw-beta:${matchId}:${sequence}`;
-      const ttlMs = Math.max(1, serverTurnTimeoutMs - safetyMarginMs);
       const packet = {
         kind: 'steamedclaw.turn',
         gameId: binding?.gameId,
@@ -249,7 +245,6 @@ function makeCoordinator(api) {
         attempts: 1,
         packet,
         idempotencyKey,
-        ttlMs,
       };
       SHARED.tokens.set(turnToken, rec);
       SHARED.currentTokenByMatch.set(matchId, turnToken);

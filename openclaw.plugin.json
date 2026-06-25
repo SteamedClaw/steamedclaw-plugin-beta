@@ -51,18 +51,6 @@
       "tickMs": {
         "type": "number",
         "description": "Supervisor poll interval (ms). Default 4000."
-      },
-      "queueTtlMs": {
-        "type": "number",
-        "description": "Max age (ms) of a queue entry before the supervisor wakes the agent to re-queue. Default 60000."
-      },
-      "serverTurnTimeoutMs": {
-        "type": "number",
-        "description": "The lane server turn timeout (ms); sets the parked-turn TTL."
-      },
-      "injectionSafetyMarginMs": {
-        "type": "number",
-        "description": "Margin subtracted from serverTurnTimeoutMs for the parked-turn TTL."
       }
     }
   }

@@ -45,7 +45,6 @@ export const BETA_DEFAULT_LANE = 'standard';
 export const BETA_MAX_SIMULTANEOUS_GAMES = 1;
 
 const DEFAULT_TICK_MS = 4000; //  supervisor cadence; WS events do the fast path
-const DEFAULT_QUEUE_TTL_MS = 60000;
 const DEFAULT_RATE_LIMIT_BACKOFF_MS = 3000; //  floor backoff on a 429
 const DEFAULT_NEXT_TURN_BLOCK_MS = 20000; //  blocking get_turn budget (072j)
 // HTTP safety-net cadence while the WS path is healthy: every Nth tick still
@@ -74,7 +73,6 @@ const DRIVER = {
   matchId: null,
   matchGameId: null,
   phase: 'idle', //  idle → queued → in_match → terminal
-  queuedAt: 0,
   paused: false, //  leave_queue flag — suppresses NEW match pickups
   lastParkedSeq: -1,
   turnsParked: 0,
@@ -94,7 +92,6 @@ export function __resetDriver() {
   DRIVER.matchId = null;
   DRIVER.matchGameId = null;
   DRIVER.phase = 'idle';
-  DRIVER.queuedAt = 0;
   DRIVER.paused = false;
   DRIVER.lastParkedSeq = -1;
   DRIVER.turnsParked = 0;
@@ -328,8 +325,14 @@ export async function supervisorTick({ client, server, cfg, logger, receiver, ap
     // the /ws/agent match_found push (handled in makeWsReceiver); the HTTP polls
     // here run only when that socket is down, or on the safety cadence.
     if (!DRIVER.matchId && DRIVER.phase === 'queued') {
-      const ttlMs = cfg.queueTtlMs ?? DEFAULT_QUEUE_TTL_MS;
-      const expired = DRIVER.queuedAt > 0 && Date.now() - DRIVER.queuedAt > ttlMs;
+      // No client-side queue timeout. Queued is queued — the server owns the TTL
+      // (standard 65 min / fast 20 min, see lane-timeouts.ts) and is the single
+      // source of truth for "still queued". A local timer once fired a false
+      // "aged out, re-queue" after 60s while the server held the entry for ~65 min
+      // (Cyd live finding, 2026-06-24; see planning/072k). The plugin queues once
+      // and WAITS for the match via the /ws/agent push + the discovery polls
+      // below. The only legitimate re-queue trigger is the server reporting the
+      // entry gone (matchmakingStatus → not_queued), handled below.
       const wsDiscovery = Boolean(receiver && receiver.status().agentReady);
       if (!wsDiscovery || safety) {
         let activeId = null;
@@ -346,27 +349,17 @@ export async function supervisorTick({ client, server, cfg, logger, receiver, ap
           if (s.ok && s.status === 'matched' && s.matchId) {
             DRIVER.matchId = s.matchId;
           } else if (s.ok && s.status === 'not_queued') {
-            // Server dropped/consumed our entry without a match. Requeue is
-            // agent-initiated (072k §3) — wake the agent to re-queue, do not
-            // auto-re-POST.
+            // Server dropped/consumed our entry without a match (a rare ~65-min
+            // event at the server TTL). This is the ONE legitimate re-queue
+            // trigger. Requeue is agent-initiated (072k §3) — wake the agent to
+            // re-queue, do not auto-re-POST.
             logger.info?.('[steamedclaw-beta] no longer queued — waking agent to re-queue');
             DRIVER.phase = 'idle';
-            DRIVER.queuedAt = 0;
             wakeAgent(
               api,
               'steamedclaw-beta-requeue',
               logger,
               'SteamedClaw Beta: your queue entry expired before a match formed. Call steamedclaw_beta_queue again to keep playing.',
-            );
-          } else if (expired) {
-            logger.info?.('[steamedclaw-beta] queue entry aged out — waking agent to re-queue');
-            DRIVER.phase = 'idle';
-            DRIVER.queuedAt = 0;
-            wakeAgent(
-              api,
-              'steamedclaw-beta-requeue',
-              logger,
-              'SteamedClaw Beta: your queue entry aged out without a match. Call steamedclaw_beta_queue again to keep playing.',
             );
           }
         }
@@ -665,11 +658,9 @@ function makeQueueTool({ client, server, locked, lockMsg, cfg, logger, receiver,
       }
       if (q.status === 'already_queued') {
         DRIVER.phase = 'queued';
-        DRIVER.queuedAt = Date.now();
         return toolText({ ok: true, status: 'already_queued', game: gameId, position: q.position });
       }
       DRIVER.phase = 'queued';
-      DRIVER.queuedAt = Date.now();
       return toolText({ ok: true, status: 'queued', game: gameId, position: q.position });
     },
   });
@@ -846,19 +837,6 @@ export default definePluginEntry({
           'WS Leg-1 receive path (/ws/agent + /ws/game). Default true; false forces the HTTP polling fallback.',
       },
       tickMs: { type: 'number', description: 'Supervisor poll interval (ms). Default 4000.' },
-      queueTtlMs: {
-        type: 'number',
-        description:
-          'Max age (ms) of a queue entry before the supervisor wakes the agent to re-queue. Default 60000.',
-      },
-      serverTurnTimeoutMs: {
-        type: 'number',
-        description: 'The lane server turn timeout (ms); sets the parked-turn TTL.',
-      },
-      injectionSafetyMarginMs: {
-        type: 'number',
-        description: 'Margin subtracted from serverTurnTimeoutMs for the parked-turn TTL.',
-      },
     },
   },
   register(api) {
