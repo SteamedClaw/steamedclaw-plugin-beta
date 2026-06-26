@@ -22,7 +22,7 @@
 import https from 'node:https';
 import http from 'node:http';
 
-export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.5';
+export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.7';
 export const TERMINAL_MATCH_STATUSES = new Set(['game_over']);
 
 export function httpRequest(method, urlStr, apiKey, body, userAgent = BETA_USER_AGENT) {
@@ -186,11 +186,28 @@ export function makeStageClient({
         };
       }
       const s = res.data ?? {};
-      return { ok: true, status: s.status, sequence: s.sequence, view: s.view, results: s.results };
+      // replayUrl is present on the server's game-over state response
+      // (buildGameOverResponse) — thread it so the opponent-ended get_turn path
+      // can surface it (#510). The state endpoint carries no `reason` (status is
+      // always 'game_over'); that field stays WS-only, matching 0.9.x.
+      return {
+        ok: true,
+        status: s.status,
+        sequence: s.sequence,
+        view: s.view,
+        results: s.results,
+        replayUrl: s.replayUrl,
+      };
     },
 
     // Submit an action; map into the coordinator's transport ack shape so WS and
     // HTTP are interchangeable. Terminal status collapses to { status:'game_over' }.
+    // A SERVER REJECTION (non-2xx with an error body) RETURNS a structured
+    // { ok:false, error, details?, currentSequence?, httpStatus } so the coordinator
+    // can map known codes (invalid_action, stale_sequence, not_your_turn,
+    // game_already_over) to actionable take_turn errors instead of one opaque
+    // submit_failed (#511). A genuine transport failure (network/timeout) still
+    // rejects `call` → throws → the coordinator's catch surfaces a generic error.
     async submitAction(matchId, sequence, action) {
       const res = await call('POST', `/api/matches/${encodeURIComponent(matchId)}/action`, {
         sequence,
@@ -204,8 +221,14 @@ export function makeStageClient({
         return { status: st.status, sequence: st.sequence, view: st.view };
       }
       const errBody = res.data ?? {};
-      const error = typeof errBody.error === 'string' ? errBody.error : 'http_error';
-      throw new Error(`${error}${res.status ? ` (HTTP ${res.status})` : ''}`);
+      return {
+        ok: false,
+        error: typeof errBody.error === 'string' ? errBody.error : 'http_error',
+        details: typeof errBody.details === 'string' ? errBody.details : undefined,
+        currentSequence:
+          typeof errBody.currentSequence === 'number' ? errBody.currentSequence : undefined,
+        httpStatus: res.status,
+      };
     },
 
     // GET /api/games — public catalog (no auth).

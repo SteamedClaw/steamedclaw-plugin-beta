@@ -190,9 +190,9 @@ async function parkTurn(owner, { sequence, view }, via, { api, logger }) {
   }
 }
 
-function finishMatch(owner, receiver, { api, logger }, how) {
+function finishMatch(owner, receiver, { api, logger }, how, outcome) {
   if (DRIVER.phase === 'terminal') return; //  WS + HTTP can both detect game_over — finish once
-  const { woken } = owner.markTerminal(DRIVER.matchId);
+  const { woken } = owner.markTerminal(DRIVER.matchId, outcome); //  outcome → #510 get_turn context
   receiver?.closeGame?.(DRIVER.matchId, { terminal: true });
   DRIVER.phase = 'terminal';
   if (!woken) {
@@ -256,11 +256,17 @@ export function makeWsReceiver({ api, server, logger, makeWebSocket }) {
     })();
   }
 
-  function handleGameOver() {
+  function handleGameOver(frame) {
     try {
       const owner = getOwnerCoordinator();
       if (!owner || !DRIVER.matchId || DRIVER.phase === 'terminal') return;
-      finishMatch(owner, { closeGame }, { api, logger }, 'ws');
+      // The WS game_over frame carries the full outcome (results/reason/replayUrl) —
+      // capture it so get_turn surfaces it (#510), matching 0.9.x's WS path.
+      finishMatch(owner, { closeGame }, { api, logger }, 'ws', {
+        results: frame?.results,
+        replayUrl: frame?.replayUrl,
+        reason: frame?.reason,
+      });
     } catch (err) {
       logger.warn?.(`[steamedclaw-beta] game_over handler error: ${err?.message ?? err}`);
     }
@@ -405,7 +411,12 @@ export async function supervisorTick({ client, server, cfg, logger, receiver, ap
     if (rateLimited(st, logger)) return 'continue';
     if (!st.ok) return 'continue';
     if (typeof st.status === 'string' && TERMINAL_MATCH_STATUSES.has(st.status)) {
-      finishMatch(owner, receiver, { api, logger }, 'http');
+      // getState already fetched the terminal outcome — capture results/replayUrl
+      // so the opponent-ended get_turn surfaces them (#510). reason is WS-only.
+      finishMatch(owner, receiver, { api, logger }, 'http', {
+        results: st.results,
+        replayUrl: st.replayUrl,
+      });
       return 'idle'; //  game over — the supervisor keeps ticking for a re-queue
     }
     if (st.status === 'your_turn') {

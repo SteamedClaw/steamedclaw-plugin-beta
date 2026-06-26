@@ -1,6 +1,6 @@
 {
   "name": "steamedclaw-plugin-beta",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "description": "Advanced/internal testing only — NOT for general use. For the production plugin, install clawhub:steamedclaw-plugin. Stage-locked SteamedClaw Beta (WS Leg-1): steamedclaw_beta_register + queue + get_turn + take_turn + leave_queue + list_games + get_rules + get_strategy, over /ws/agent and /ws/game. Plays only against stage.steamedclaw.com.",
   "type": "module",
   "main": "./entry.mjs",

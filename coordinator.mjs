@@ -32,6 +32,7 @@ const SHARED = {
   currentTokenByMatch: new Map(), //  matchId -> turnToken (newest; older are stale)
   transportByMatch: new Map(), //  matchId -> { isOpen(): bool, submit(frame): Promise<ack> } — dormant Leg-2 seam
   terminalMatches: new Set(), //  matchId set after game_over
+  terminalOutcomes: new Map(), //  matchId -> { results?, replayUrl?, reason? } captured at game_over (#510)
   pending: null, //  single shared pending-action slot: { matchId, turnToken }
   owner: null, //  generation of the live full-mode coordinator (fence)
   ownerCoordinator: null, //  the live owner's coordinator object (module-scope handle)
@@ -90,11 +91,80 @@ export function __resetState() {
   SHARED.currentTokenByMatch.clear();
   SHARED.transportByMatch.clear();
   SHARED.terminalMatches.clear();
+  SHARED.terminalOutcomes.clear();
   SHARED.pending = null;
   SHARED.owner = null;
   SHARED.ownerCoordinator = null;
   SHARED.generation = 0;
   SHARED.tokenSeq = 0;
+}
+
+// Build a clean terminal-outcome object from a source that carries some of
+// { results, replayUrl, reason } — dropping undefined keys so a bare game_over
+// (nothing captured) never surfaces phantom `results:undefined` etc. (#510).
+// `reason` is best-effort: WS game_over frames carry it; the HTTP state endpoint
+// does not (it always reports status:'game_over'), matching 0.9.x's HTTP path.
+function cleanOutcome(source) {
+  if (!source || typeof source !== 'object') return null;
+  const out = {};
+  if (source.results !== undefined) out.results = source.results;
+  if (source.replayUrl !== undefined) out.replayUrl = source.replayUrl;
+  if (source.reason !== undefined) out.reason = source.reason;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+// get_rules recovery hint surfaced on a server invalid_action (#511, ported from
+// the published plugin's #397 invalidActionHint). Names the current game and
+// points at the beta's get_rules tool so a minimal-SOUL agent has a concrete
+// recovery path instead of an opaque failure. Falls back to a game-less form when
+// the bound match has no gameId (never interpolates a literal "undefined").
+function invalidActionHint(gameId) {
+  return gameId
+    ? `Action shape rejected. Call steamedclaw_beta_get_rules({gameId: "${gameId}"}) for the valid action schema, then retry with a conformant action.`
+    : `Action shape rejected. Call steamedclaw_beta_get_rules({gameId}) for the current game's action schema, then retry.`;
+}
+
+// Map a structured server rejection (from transport.submitAction, #511) to an
+// actionable take_turn error. Recoverable rejections RELEASE the parked turn's
+// token (rec.used=false) so the agent can re-submit the SAME turn with a corrected
+// action; game_already_over instead flips the match terminal so get_turn reports
+// game_over and the agent stops. Unknown codes pass through with their code +
+// httpStatus preserved — never collapsed to a single opaque submit_failed.
+function mapServerRejection(ack, rec) {
+  const code = ack.error;
+  if (code === 'game_already_over') {
+    SHARED.terminalMatches.add(rec.matchId);
+    SHARED.currentTokenByMatch.delete(rec.matchId);
+    return {
+      ok: false,
+      error: 'game_already_over',
+      message:
+        'The match has already ended on the server. Call steamedclaw_beta_get_turn to confirm, then stop or re-queue.',
+    };
+  }
+  rec.used = false; //  recoverable — the parked turn survives for a corrected re-submit
+  if (code === 'invalid_action') {
+    return {
+      ok: false,
+      error: 'invalid_action',
+      details: ack.details,
+      hint: invalidActionHint(rec.packet?.gameId),
+    };
+  }
+  if (code === 'stale_sequence') {
+    return { ok: false, error: 'stale_sequence', currentSequence: ack.currentSequence };
+  }
+  if (code === 'not_your_turn') {
+    return {
+      ok: false,
+      error: 'not_your_turn',
+      details:
+        ack.details ??
+        'The server advanced state without a push this agent observed. Call steamedclaw_beta_get_turn to refresh before retrying.',
+      currentSequence: ack.currentSequence,
+    };
+  }
+  return { ok: false, error: code, details: ack.details, httpStatus: ack.httpStatus };
 }
 
 // Test-only view into module scope (assertions only — never used by logic).
@@ -264,7 +334,15 @@ function makeCoordinator(api) {
       if (!binding) return { status: 'not_joined' };
       const matchId = binding.matchId;
       if (!matchId) return { status: 'no_match' };
-      if (SHARED.terminalMatches.has(matchId)) return { status: 'game_over', matchId };
+      if (SHARED.terminalMatches.has(matchId)) {
+        // Surface the outcome captured at terminal detection so an agent parked
+        // in get_turn on the opponent-ended path learns win/loss + replay, not a
+        // bare terminal status (#510). Absent ⇒ bare game_over (no phantom keys).
+        const outcome = SHARED.terminalOutcomes.get(matchId);
+        return outcome
+          ? { status: 'game_over', matchId, ...outcome }
+          : { status: 'game_over', matchId };
+      }
       const turnToken = SHARED.currentTokenByMatch.get(matchId);
       if (!turnToken) return { status: 'waiting', matchId };
       const rec = SHARED.tokens.get(turnToken);
@@ -324,9 +402,19 @@ function makeCoordinator(api) {
           action,
           httpSubmit,
         });
+        if (ack && ack.ok === false) {
+          // Server REJECTED the action (structured error from transport, #511) —
+          // map it to an actionable take_turn error (with a get_rules hint on
+          // invalid_action) instead of collapsing everything to submit_failed.
+          return mapServerRejection(ack, rec);
+        }
         if (ack.status === 'game_over') {
           SHARED.terminalMatches.add(rec.matchId);
           SHARED.currentTokenByMatch.delete(rec.matchId);
+          // Persist the outcome so a get_turn re-read after a self-ending move
+          // also carries results/replayUrl, not just the transient take_turn ack (#510).
+          const outcome = cleanOutcome(ack);
+          if (outcome) SHARED.terminalOutcomes.set(rec.matchId, outcome);
           return { ok: true, ...ack };
         }
         // INVARIANT: take_turn never surfaces an actionable turn or a turnToken —
@@ -349,9 +437,13 @@ function makeCoordinator(api) {
       }
     },
 
-    markTerminal(matchId) {
+    markTerminal(matchId, outcome) {
       assertOwner();
       SHARED.terminalMatches.add(matchId);
+      // Capture the game-over outcome (opponent-ended / timeout / forfeit) so the
+      // parked get_turn re-read surfaces results/replayUrl/reason (#510).
+      const cleaned = cleanOutcome(outcome);
+      if (cleaned) SHARED.terminalOutcomes.set(matchId, cleaned);
       const tok = SHARED.currentTokenByMatch.get(matchId);
       if (tok) SHARED.tokens.delete(tok);
       SHARED.currentTokenByMatch.delete(matchId);
@@ -381,6 +473,7 @@ function makeCoordinator(api) {
           SHARED.currentTokenByMatch.clear();
           SHARED.transportByMatch.clear();
           SHARED.terminalMatches.clear();
+          SHARED.terminalOutcomes.clear();
           SHARED.pending = null;
           SHARED.owner = null;
           SHARED.ownerCoordinator = null;
@@ -453,7 +546,7 @@ export function makeGetTurnFactory(coordinator, { nextTurnBlockMs } = {}) {
 export function makeTakeTurnFactory(coordinator, { httpSubmit }) {
   return (ctx) => ({
     name: 'steamedclaw_beta_take_turn',
-    description: `Submit your one action for the current SteamedClaw Beta turn. Pass the turnToken that steamedclaw_beta_get_turn returned with status "your_turn", plus your chosen action (the move shape is game-specific, e.g. {type:"move", position:4} for tic-tac-toe). After submitting, call steamedclaw_beta_get_turn again. ${PLAY_LOOP}`,
+    description: `Submit your one action for the current SteamedClaw Beta turn. Pass the turnToken that steamedclaw_beta_get_turn returned with status "your_turn", plus your chosen action (the move shape is game-specific, e.g. {type:"move", position:4} for tic-tac-toe). On success returns {ok:true, status:"submitted"} (call steamedclaw_beta_get_turn again) or {ok:true, status:"game_over", results, replayUrl} (the match ended). On error the result is {ok:false, error, ...} — recover by error code: "invalid_action" means the action shape was rejected — the result includes a "hint" pointing at steamedclaw_beta_get_rules for the current game; fetch the rules and retry with a conformant action. "stale_sequence" means a newer turn arrived (a "currentSequence" is included) — call steamedclaw_beta_get_turn to refresh, then retry. "not_your_turn" means the server advanced without a turn this agent saw — call steamedclaw_beta_get_turn to refresh. "game_already_over" means the match has ended — call steamedclaw_beta_get_turn to confirm, then stop or re-queue. "submit_failed" is a transient transport failure — wait a moment and retry. After submitting, call steamedclaw_beta_get_turn again. ${PLAY_LOOP}`,
     parameters: {
       type: 'object',
       properties: {
