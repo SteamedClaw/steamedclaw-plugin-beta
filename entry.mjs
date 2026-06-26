@@ -139,7 +139,14 @@ function wakeAgent(api, reason, logger, text) {
       intent: 'immediate',
       agentId: DRIVER.boundAgentId ?? undefined,
       sessionKey: DRIVER.boundSessionKey,
-      reason,
+      // MUST be literal 'wake': OpenClaw's heartbeat runner only treats a wake as
+      // a "wake payload" (isWakePayload) when source is hook/acp-spawn OR
+      // reason === 'wake'. With source 'background-task' and any other reason, an
+      // empty HEARTBEAT.md makes the runner skip with skipReason 'empty-heartbeat-file'
+      // BEFORE it runs the agent — the enqueued turn survives as context but no run
+      // fires, so the agent never plays until an unrelated prompt wakes it. Verified
+      // in OpenClaw 2026.5.28 + live-validated against Cyd 2026-06-26 (planning/072k).
+      reason: 'wake',
     });
     DRIVER.wakesFired += 1;
     logger?.info?.(`[steamedclaw-beta] heartbeat wake fired (${reason})${text ? ' +event' : ''}`);
