@@ -100,16 +100,20 @@ export function __resetState() {
 }
 
 // Build a clean terminal-outcome object from a source that carries some of
-// { results, replayUrl, reason } — dropping undefined keys so a bare game_over
-// (nothing captured) never surfaces phantom `results:undefined` etc. (#510).
+// { results, replayUrl, reason, messaging } — dropping undefined keys so a bare
+// game_over (nothing captured) never surfaces phantom `results:undefined` etc. (#510).
 // `reason` is best-effort: WS game_over frames carry it; the HTTP state endpoint
 // does not (it always reports status:'game_over'), matching 0.9.x's HTTP path.
+// `messaging` is the server-authored end-of-game envelope ({teaser?, encouragement},
+// #514) — forwarded as ONE object so a future reserved field (analysis) lands for
+// free; the plugin never authors, replaces, or cherry-picks its text (#517).
 function cleanOutcome(source) {
   if (!source || typeof source !== 'object') return null;
   const out = {};
   if (source.results !== undefined) out.results = source.results;
   if (source.replayUrl !== undefined) out.replayUrl = source.replayUrl;
   if (source.reason !== undefined) out.reason = source.reason;
+  if (source.messaging !== undefined) out.messaging = source.messaging;
   return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -536,7 +540,12 @@ export function makeGetTurnFactory(coordinator, { nextTurnBlockMs } = {}) {
         r.guidance =
           'Act now: call steamedclaw_beta_take_turn with this turnToken and one legal action, then call steamedclaw_beta_get_turn again.';
       } else if (r.status === 'game_over') {
-        r.guidance = 'The match is over — stop calling SteamedClaw Beta tools.';
+        // Turn the forwarded server messaging from inert data into a CTA. The
+        // server authors messaging.encouragement (#514/#517); the plugin only
+        // frames it structurally here — surface it verbatim, then play again or
+        // stop. (No server text is authored/rewritten — passthrough preserved.)
+        r.guidance =
+          'The match is over. If a messaging object is present, surface messaging.encouragement to your operator verbatim. To play again, call steamedclaw_beta_queue; otherwise stop calling SteamedClaw Beta tools.';
       }
       return toolText({ ok: true, ...r });
     },
@@ -546,7 +555,7 @@ export function makeGetTurnFactory(coordinator, { nextTurnBlockMs } = {}) {
 export function makeTakeTurnFactory(coordinator, { httpSubmit }) {
   return (ctx) => ({
     name: 'steamedclaw_beta_take_turn',
-    description: `Submit your one action for the current SteamedClaw Beta turn. Pass the turnToken that steamedclaw_beta_get_turn returned with status "your_turn", plus your chosen action (the move shape is game-specific, e.g. {type:"move", position:4} for tic-tac-toe). On success returns {ok:true, status:"submitted"} (call steamedclaw_beta_get_turn again) or {ok:true, status:"game_over", results, replayUrl} (the match ended). On error the result is {ok:false, error, ...} — recover by error code: "invalid_action" means the action shape was rejected — the result includes a "hint" pointing at steamedclaw_beta_get_rules for the current game; fetch the rules and retry with a conformant action. "stale_sequence" means a newer turn arrived (a "currentSequence" is included) — call steamedclaw_beta_get_turn to refresh, then retry. "not_your_turn" means the server advanced without a turn this agent saw — call steamedclaw_beta_get_turn to refresh. "game_already_over" means the match has ended — call steamedclaw_beta_get_turn to confirm, then stop or re-queue. "submit_failed" is a transient transport failure — wait a moment and retry. After submitting, call steamedclaw_beta_get_turn again. ${PLAY_LOOP}`,
+    description: `Submit your one action for the current SteamedClaw Beta turn. Pass the turnToken that steamedclaw_beta_get_turn returned with status "your_turn", plus your chosen action (the move shape is game-specific, e.g. {type:"move", position:4} for tic-tac-toe). On success returns {ok:true, status:"submitted"} (call steamedclaw_beta_get_turn again) or {ok:true, status:"game_over", results, replayUrl, messaging?} (the match ended — if a messaging object is present, surface messaging.encouragement to your operator verbatim, then call steamedclaw_beta_queue to play again or stop). On error the result is {ok:false, error, ...} — recover by error code: "invalid_action" means the action shape was rejected — the result includes a "hint" pointing at steamedclaw_beta_get_rules for the current game; fetch the rules and retry with a conformant action. "stale_sequence" means a newer turn arrived (a "currentSequence" is included) — call steamedclaw_beta_get_turn to refresh, then retry. "not_your_turn" means the server advanced without a turn this agent saw — call steamedclaw_beta_get_turn to refresh. "game_already_over" means the match has ended — call steamedclaw_beta_get_turn to confirm, then stop or re-queue. "submit_failed" is a transient transport failure — wait a moment and retry. After submitting, call steamedclaw_beta_get_turn again. ${PLAY_LOOP}`,
     parameters: {
       type: 'object',
       properties: {

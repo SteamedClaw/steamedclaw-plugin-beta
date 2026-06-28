@@ -260,12 +260,14 @@ export function makeWsReceiver({ api, server, logger, makeWebSocket }) {
     try {
       const owner = getOwnerCoordinator();
       if (!owner || !DRIVER.matchId || DRIVER.phase === 'terminal') return;
-      // The WS game_over frame carries the full outcome (results/reason/replayUrl) —
-      // capture it so get_turn surfaces it (#510), matching 0.9.x's WS path.
+      // The WS game_over frame carries the full outcome (results/reason/replayUrl)
+      // plus the server messaging envelope (#514) — capture all of it so get_turn
+      // surfaces results/reason/replayUrl (#510) and forwards messaging verbatim (#517).
       finishMatch(owner, { closeGame }, { api, logger }, 'ws', {
         results: frame?.results,
         replayUrl: frame?.replayUrl,
         reason: frame?.reason,
+        messaging: frame?.messaging,
       });
     } catch (err) {
       logger.warn?.(`[steamedclaw-beta] game_over handler error: ${err?.message ?? err}`);
@@ -412,10 +414,12 @@ export async function supervisorTick({ client, server, cfg, logger, receiver, ap
     if (!st.ok) return 'continue';
     if (typeof st.status === 'string' && TERMINAL_MATCH_STATUSES.has(st.status)) {
       // getState already fetched the terminal outcome — capture results/replayUrl
-      // so the opponent-ended get_turn surfaces them (#510). reason is WS-only.
+      // so the opponent-ended get_turn surfaces them (#510), plus the server
+      // messaging envelope (#514) to forward verbatim (#517). reason is WS-only.
       finishMatch(owner, receiver, { api, logger }, 'http', {
         results: st.results,
         replayUrl: st.replayUrl,
+        messaging: st.messaging,
       });
       return 'idle'; //  game over — the supervisor keeps ticking for a re-queue
     }

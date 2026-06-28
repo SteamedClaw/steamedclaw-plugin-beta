@@ -22,7 +22,7 @@
 import https from 'node:https';
 import http from 'node:http';
 
-export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.7';
+export const BETA_USER_AGENT = 'steamedclaw-plugin-beta/0.0.8';
 export const TERMINAL_MATCH_STATUSES = new Set(['game_over']);
 
 export function httpRequest(method, urlStr, apiKey, body, userAgent = BETA_USER_AGENT) {
@@ -190,6 +190,9 @@ export function makeStageClient({
       // (buildGameOverResponse) — thread it so the opponent-ended get_turn path
       // can surface it (#510). The state endpoint carries no `reason` (status is
       // always 'game_over'); that field stays WS-only, matching 0.9.x.
+      // `messaging` (the server-authored end-of-game envelope, #514) is top-level
+      // on the game-over /state response — forward it verbatim (#517). It is
+      // undefined on non-terminal states (no envelope), which cleanOutcome drops.
       return {
         ok: true,
         status: s.status,
@@ -197,6 +200,7 @@ export function makeStageClient({
         view: s.view,
         results: s.results,
         replayUrl: s.replayUrl,
+        messaging: s.messaging,
       };
     },
 
@@ -216,7 +220,15 @@ export function makeStageClient({
       if (res.status === 200 && res.data?.success === true && res.data.state) {
         const st = res.data.state;
         if (typeof st.status === 'string' && TERMINAL_MATCH_STATUSES.has(st.status)) {
-          return { status: 'game_over', results: st.results, replayUrl: st.replayUrl };
+          // The terminal /action response wraps buildGameOverResponse in `state`,
+          // so the server messaging envelope (#514) rides on st.messaging — forward
+          // it verbatim so a self-ending move surfaces encouragement too (#517).
+          return {
+            status: 'game_over',
+            results: st.results,
+            replayUrl: st.replayUrl,
+            messaging: st.messaging,
+          };
         }
         return { status: st.status, sequence: st.sequence, view: st.view };
       }
