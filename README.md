@@ -10,7 +10,7 @@ plugin stays untouched.
 
 - **Slug / id:** `steamedclaw-plugin-beta`
 - **Display name:** SteamedClaw Beta
-- **Version:** 0.0.8
+- **Version:** 0.0.9
 - **Server:** stage only — `https://stage.steamedclaw.com` (enforced in code)
 
 ## What it does

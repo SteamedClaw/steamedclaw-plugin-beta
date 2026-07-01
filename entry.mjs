@@ -36,11 +36,12 @@ import {
 } from './ws-receiver.mjs';
 
 export const BETA_LANES = ['fast', 'standard'];
-// Beta default lane: 'standard' (longer per-turn window). The beta is WS
-// push-driven, but its first live validation (072j game 3) ran on 'standard';
-// the heartbeat-wake path is more forgiving at the longer window. An explicit
-// lane on a queue call overrides this.
-export const BETA_DEFAULT_LANE = 'standard';
+// Beta default lane: 'fast' (short per-turn window), aligning the beta with the
+// published plugin. The beta is WS push-driven and wakes the agent on-arrival
+// (reason:'wake'), so the short window has ample headroom for responsive play.
+// An agent on a slow heartbeat/poll cadence can pass lane:'standard' (long
+// per-turn window) on a queue call; an operator can set configSchema.defaultLane.
+export const BETA_DEFAULT_LANE = 'fast';
 // v1 supports exactly one simultaneous game (072k §3). >1 is rejected.
 export const BETA_MAX_SIMULTANEOUS_GAMES = 1;
 
@@ -574,7 +575,7 @@ function makeQueueTool({ client, server, locked, lockMsg, cfg, logger, receiver,
   const maxGames = cfg.maxSimultaneousGames ?? BETA_MAX_SIMULTANEOUS_GAMES;
   return (ctx) => ({
     name: 'steamedclaw_beta_queue',
-    description: `Enter SteamedClaw Beta matchmaking for a game (STAGE ONLY). Pass {gameId, lane?} — gameId is a SteamedClaw game id (call steamedclaw_beta_list_games to discover ids); optional lane is "fast" or "standard" (omit for the configured default "${BETA_DEFAULT_LANE}"). This binds your session and holds the queue. Returns {ok, status, matchId?, game?, position?, error?}. On status="matched" a match formed — call steamedclaw_beta_get_turn (it blocks until your turn). On status="queued" no pairing yet — call steamedclaw_beta_get_turn and it will wake/resolve when a match is found; do NOT spam queue. On status="already_queued" you are already in queue. On error="already_in_match" finish the current match first. On error="game_not_allowed" the operator restricted which games this beta may play. On error="beta_stage_only" the server is not stage. On error="not_registered" call steamedclaw_beta_register first. ${'After a match, loop steamedclaw_beta_get_turn / steamedclaw_beta_take_turn to game-over.'}`,
+    description: `Enter SteamedClaw Beta matchmaking for a game (STAGE ONLY). Pass {gameId, lane?} — gameId is a SteamedClaw game id (call steamedclaw_beta_list_games to discover ids); optional lane selects the per-turn time budget — "fast" (the default: short per-turn window, best for responsive WebSocket play) or "standard" (long per-turn window, for agents on a slow heartbeat/poll cadence) — omit for the default ("${BETA_DEFAULT_LANE}"). This binds your session and holds the queue. Returns {ok, status, matchId?, game?, position?, error?}. On status="matched" a match formed — call steamedclaw_beta_get_turn (it blocks until your turn). On status="queued" no pairing yet — call steamedclaw_beta_get_turn and it will wake/resolve when a match is found; do NOT spam queue. On status="already_queued" you are already in queue. On error="already_in_match" finish the current match first. On error="game_not_allowed" the operator restricted which games this beta may play. On error="beta_stage_only" the server is not stage. On error="not_registered" call steamedclaw_beta_register first. ${'After a match, loop steamedclaw_beta_get_turn / steamedclaw_beta_take_turn to game-over.'}`,
     parameters: {
       type: 'object',
       properties: {
@@ -585,7 +586,8 @@ function makeQueueTool({ client, server, locked, lockMsg, cfg, logger, receiver,
         lane: {
           type: 'string',
           enum: BETA_LANES,
-          description: 'Optional lane: "fast" or "standard". Omit for the configured default.',
+          description:
+            'Optional match lane (per-turn time budget). "fast" (default): short per-turn window — best for responsive play, since the plugin wakes you over WebSocket the moment it is your turn. "standard": long per-turn window — choose this only if your agent runs on a slow heartbeat/poll cadence and may not act for many minutes. On either lane, exceeding the per-turn window forfeits the match. Omit to use the default (fast).',
         },
       },
       required: ['gameId'],
@@ -834,7 +836,7 @@ export default definePluginEntry({
         enum: BETA_LANES,
         default: BETA_DEFAULT_LANE,
         description:
-          'Default match lane for queue calls when none is passed. "fast" (low-latency) or "standard" (heartbeat-paced; the beta default).',
+          'Default match lane for queue calls when none is passed. "fast" (the beta default: short per-turn window, responsive WS play) or "standard" (long per-turn window; for heartbeat-paced agents).',
       },
       maxSimultaneousGames: {
         type: 'number',
